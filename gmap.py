@@ -1,15 +1,20 @@
-################################################
 import pygame
 import sys, time, random
 from pyswip import Prolog, Functor, Variable, Query
 
-import pathlib
-current_path = str(pathlib.Path().resolve())
+import os
+
+current_path = os.path.dirname(os.path.abspath(__file__))
+os.chdir(current_path)
+
+# uso: python gmap.py mapa_dificil.pl
+arquivo_mapa = sys.argv[1] if len(sys.argv) > 1 else 'mapa_medio.pl'
 
 elapsed_time = 0
-auto_play_tempo = 0.5
-auto_play = False # desligar para controlar manualmente
-show_map = False
+auto_play_tempo = 0.2
+auto_play = True        # tecla A
+show_map = False        # tecla M
+MAX_ACOES = 1000
 
 scale = 60
 size_x = 12
@@ -38,11 +43,16 @@ mapa=[['','','','','','','','','','','',''],
 visitados = []
 certezas = []
 
-pl_file = (current_path + '\\main.pl').replace('\\','/')
+pl_file = (current_path + '/main.pl').replace('\\','/')
 prolog = Prolog()
 prolog.consult(pl_file)
+list(prolog.query("carrega_mapa('%s')" % (current_path + '/' + arquivo_mapa).replace('\\','/')))
 
 last_action = ""
+ouro = 0
+num_acoes = 0
+fim = 'nao'
+resultado_registrado = False
 
 def decisao():
 
@@ -58,99 +68,72 @@ def decisao():
 def exec_prolog(a):
     global last_action
     if a != "":
-        list(prolog.query(a))
+        list(prolog.query(a, maxresult=1))
     last_action = a
 
+
+def um(q):
+    r = list(prolog.query(q, maxresult=1))
+    return r[0] if r else None
+
+
+def jogo_acabou():
+    return player_pos[2] == 'morto' or fim != 'nao' or num_acoes >= MAX_ACOES
+
+
+def registra_resultado():
+    global resultado_registrado
+    if resultado_registrado:
+        return
+    resultado_registrado = True
+    motivo = 'morreu' if player_pos[2] == 'morto' else (fim if fim != 'nao' else 'limite_acoes')
+    novo = not os.path.exists('resultados_interface.csv')
+    with open('resultados_interface.csv', 'a') as f:
+        if novo:
+            f.write('mapa,pontuacao,ouro,sobreviveu,acoes,energia,fim\n')
+        f.write('%s,%s,%s,%s,%s,%s,%s\n' % (arquivo_mapa, pontuacao, ouro, motivo != 'morreu',
+                                           num_acoes, energia, motivo))
+    print('FIM: mapa=%s pontuacao=%s ouro=%s acoes=%s energia=%s fim=%s' % (
+        arquivo_mapa, pontuacao, ouro, num_acoes, energia, motivo))
+
 def update_prolog():
-    global player_pos, mapa, energia, pontuacao,visitados, show_map
+    global player_pos, mapa, energia, pontuacao, visitados, show_map, ouro, num_acoes, fim
 
-    list(prolog.query("atualiza_obs, verifica_player"))
+    acao = last_action if last_action != "" else "nenhuma"
+    um("verifica_player, agente_percebe(%s)" % acao)
 
-    x = Variable()
-    y = Variable()
-    visitado = Functor("visitado", 2)
-    visitado_query = Query(visitado(x,y))
     visitados.clear()
-    while visitado_query.nextSolution():
-        visitados.append((x.value,y.value))
-    visitado_query.closeQuery()
+    for v in um("visitadas(L)")['L']:
+        visitados.append((v[0], v[1]))
 
-    x = Variable()
-    y = Variable()
-    certeza = Functor("certeza", 2)
-    certeza_query = Query(certeza(x,y))
+    for j in range(len(mapa)):
+        for i in range(len(mapa[j])):
+            mapa[j][i] = ''
     certezas.clear()
-    while certeza_query.nextSolution():
-        certezas.append((x.value,y.value))
-    certeza_query.closeQuery()
-        
-    if show_map:    
-        x = Variable()
-        y = Variable()
-        z = Variable()    
-        tile = Functor("tile", 3)
-        tile_query = Query(tile(x,y,z))
-        while tile_query.nextSolution():
-            mapa[y.get_value()-1][x.get_value()-1] = str(z.value)
-        tile_query.closeQuery()
 
+    if show_map:
+        # mapa real 
+        for r in prolog.query("tile(X,Y,Z)"):
+            mapa[r['Y']-1][r['X']-1] = str(r['Z'])
+            certezas.append((r['X'], r['Y']))
     else:
+        # mapa conhecido pelo agente
+        for x, y, simbolo, certo in um("kb_resumo(L)")['L']:
+            mapa[y-1][x-1] += str(simbolo)
+            if certo == 1:
+                certezas.append((x, y))
 
-        y = 0
-        for j in mapa:
-            x = 0
-            for i in j:
-                mapa[y][x] = ''
-                x  += 1
-            y +=  1
+    r = um("posicao(X,Y,D), energia(E), pontuacao(P), ouro_coletado(O), num_acoes(N), "
+           "(fim_de_jogo(F) -> true ; F = nao)")
+    player_pos = (r['X'], r['Y'], str(r['D']))
+    energia = r['E']
+    pontuacao = r['P']
+    ouro = r['O']
+    num_acoes = r['N']
+    fim = str(r['F'])
 
-        x = Variable()
-        y = Variable()
-        z = Variable()    
-        memory = Functor("memory", 3)
-        memory_query = Query(memory(x,y,z))
-        while memory_query.nextSolution():
-            for s in z.value:
-                
-                if str(s) == 'brisa':
-                    mapa[y.get_value()-1][x.get_value()-1] += 'P'
-                elif str(s) == 'palmas':
-                    mapa[y.get_value()-1][x.get_value()-1] += 'T'
-                elif str(s) == 'passos':
-                    mapa[y.get_value()-1][x.get_value()-1] += 'D'
-                elif str(s) == 'reflexo':
-                    mapa[y.get_value()-1][x.get_value()-1] += 'U'
-                elif str(s) == 'brilho':
-                    mapa[y.get_value()-1][x.get_value()-1] += 'O'
-            
-        memory_query.closeQuery()
-
-    x = Variable()
-    y = Variable()
-    z = Variable()
-
-    posicao = Functor("posicao", 3)
-    position_query = Query(posicao(x,y,z))
-    position_query.nextSolution()
-    player_pos = (x.value,y.value,str(z.value))
-    position_query.closeQuery()
-
-    x = Variable()
-    energia = Functor("energia", 1)
-    energia_query = Query(energia(x))
-    energia_query.nextSolution()
-    energia = x.value
-    energia_query.closeQuery()
-
-    x = Variable()
-    pontuacao = Functor("pontuacao", 1)
-    pontuacao_query = Query(pontuacao(x))
-    pontuacao_query.nextSolution()
-    pontuacao = x.value
-    pontuacao_query.closeQuery()
-
-    #print(mapa)
-    #print(player_pos)
+    if jogo_acabou():
+        registra_resultado()
 
 
 def load():
@@ -260,7 +243,7 @@ def update(dt, screen):
     
     if (elapsed_time / 1000) > auto_play_tempo:
         
-        if auto_play and player_pos[2] != 'morto':
+        if auto_play and not jogo_acabou():
             exec_prolog(decisao())
             update_prolog()
        
@@ -270,11 +253,14 @@ def update(dt, screen):
 
 def key_pressed(event):
     
-    global show_map
+    global show_map, auto_play
     #leitura do teclado
     if event.type == pygame.KEYDOWN:
-        
-        if not auto_play and player_pos[2] != 'morto':
+
+        if event.key == pygame.K_a:
+            auto_play = not auto_play
+
+        if not auto_play and not jogo_acabou():
             if event.key == pygame.K_LEFT: #tecla esquerda
                 exec_prolog("virar_esquerda")
                 update_prolog()
@@ -361,13 +347,26 @@ def draw_screen(screen):
         y +=  1
 
     t = sys_font.render("Pontuação: " + str(pontuacao), False, (255,255,255))
-    screen.blit(t, t.get_rect(top = height + 5, left=40))
+    screen.blit(t, t.get_rect(top = height + 5, left=20))
 
-    t = sys_font.render(last_action, False, (255,255,255))
-    screen.blit(t, t.get_rect(top = height + 5, left=width/2-40))
-    
+    t = sys_font.render(str(last_action), False, (255,255,255))
+    screen.blit(t, t.get_rect(top = height + 5, left=width/2-60))
+
     t = sys_font.render("Energia: " + str(energia), False, (255,255,255))
-    screen.blit(t, t.get_rect(top = height + 5, left=width-140))
+    screen.blit(t, t.get_rect(top = height + 5, left=width-160))
+
+    t = sys_font.render("Ouro: %s/3   Ações: %s" % (ouro, num_acoes), False, (255,255,255))
+    screen.blit(t, t.get_rect(top = height + 32, left=20))
+
+    if jogo_acabou():
+        msg = {'saiu': 'FIM - saiu em [1,1]', 'parou': 'FIM - parou'}.get(fim, 'FIM')
+        if player_pos[2] == 'morto':
+            msg = 'FIM - morreu'
+        t = sys_font.render(msg, False, (255,220,0))
+        screen.blit(t, t.get_rect(top = height + 32, left=width-260))
+    elif not auto_play:
+        t = sys_font.render("manual (A = auto)", False, (180,180,180))
+        screen.blit(t, t.get_rect(top = height + 32, left=width-260))
 
 def main_loop(screen):  
     global clock
@@ -381,26 +380,21 @@ def main_loop(screen):
             
             key_pressed(e)
             
-        # Calcula tempo transcorrido desde
-        # a última atualização 
         dt = clock.tick()
         
         
-        # Atualiza posição dos objetos da tela
         update(dt, screen)
         
-        # Desenha objetos na tela 
         draw_screen(screen)
 
-        # Pygame atualiza o seu estado
         pygame.display.update() 
 
 
 update_prolog()
 
 pygame.init()
-pygame.display.set_caption('INF1771 Trabalho 2 - Agente Lógico')
-screen = pygame.display.set_mode((width, height+30))
+pygame.display.set_caption('INF1771 Trabalho 2 - Agente Lógico - ' + arquivo_mapa)
+screen = pygame.display.set_mode((width, height+60))
 load()
 
 main_loop(screen)

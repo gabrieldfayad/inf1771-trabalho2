@@ -1,12 +1,9 @@
-# INF1771_Wumpus_Prolog_Python
+Integrantes:
+  1. Gabriel Fayad - 2310126
+  2. Pedro Szklo - 2310611
+  3. Gabriel Gedey - 2210508
 
-Warning - swipl module is currently compatible with swi-prolog 8.4.3 download here  https://www.swi-prolog.org/download/stable/bin/swipl-8.4.3-1.x64.exe.envelope
 
-Mapa Fácil
-![Mapa Fácil](mapa-facil.png)
+Link para o vídeo: https://youtu.be/5nmaRhhq8GQ 
 
-Mapa Médio
-![Mapa Médio](mapa-medio.png)
-
-Mapa Difícil
-![Mapa Difícil](mapa-dificil.png)
+rodaro programa usando:  python gmap.py mapa_xxxxx.pl
